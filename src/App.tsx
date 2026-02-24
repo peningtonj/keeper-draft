@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import playersCacheUrl from '../server/cache/players.json?url'
+import yearsCacheUrl from '../server/cache/years.json?url'
 
 type Player = {
   id: number | null
@@ -18,6 +19,9 @@ type Player = {
   yearsPlaying: number | null
   firstYear: number | null
   ageYears: number | null
+  lastFiveSeasons?: Array<{ season: number; games: number; average: number | null }>
+  lastFiveGames?: number | null
+  lastFiveAverage?: number | null
 }
 
 type ApiResponse = {
@@ -27,14 +31,48 @@ type ApiResponse = {
   count: number
 }
 
+type YearsCache = Record<string, { yearsPlaying: number | null; firstYear: number | null; ageYears: number | null }>
+
 const STORAGE_KEY = 'keeper-players-cache-v2'
 const DRAFT_KEY = 'keeper-draft-status-v1'
 const ASSIGN_KEY = 'keeper-position-assignments-v1'
+const SHORTLIST_KEY = 'keeper-shortlist-v1'
+const SHORTLIST_NOTES_KEY = 'keeper-shortlist-notes-v1'
 
 type DraftStatus = 'mine' | 'unavailable' | null
 
 type DraftMap = Record<string, DraftStatus>
 type AssignmentMap = Record<string, string>
+type ShortlistMap = Record<string, boolean>
+type ShortlistNotesMap = Record<string, string>
+
+const normalizePlayerKey = (name: string) => {
+  const cleaned = name
+    .replace(/’/g, "'")
+    .replace(/\./g, ' ')
+    .replace(/-/g, ' ')
+    .replace(/\u00a0/g, ' ')
+  const normalized = cleaned.toLowerCase().split(/\s+/).filter(Boolean).join(' ')
+  return normalized.replace(/\b(jr|junior)\b/g, '').trim().replace(/\s+/g, ' ')
+}
+
+const cacheKey = (name: string, team: string | null) =>
+  `${normalizePlayerKey(name)}|${(team ?? '').toLowerCase()}`
+
+const mergeYearsCache = (players: Player[], yearsCache: YearsCache | null) => {
+  if (!yearsCache) return players
+  return players.map((player) => {
+    const key = cacheKey(player.name, player.team)
+    const cached = yearsCache[key]
+    if (!cached) return player
+    return {
+      ...player,
+      yearsPlaying: cached.yearsPlaying ?? player.yearsPlaying ?? null,
+      firstYear: cached.firstYear ?? player.firstYear ?? null,
+      ageYears: cached.ageYears ?? player.ageYears ?? null,
+    }
+  })
+}
 
 function App() {
   const [players, setPlayers] = useState<Player[]>([])
@@ -48,6 +86,10 @@ function App() {
   const [showFitsOnly, setShowFitsOnly] = useState(true)
   const [draftMap, setDraftMap] = useState<DraftMap>({})
   const [assignments, setAssignments] = useState<AssignmentMap>({})
+  const [shortlistMap, setShortlistMap] = useState<ShortlistMap>({})
+  const [shortlistNotes, setShortlistNotes] = useState<ShortlistNotesMap>({})
+  const [showShortlist, setShowShortlist] = useState(false)
+  const [expandedShortlist, setExpandedShortlist] = useState<Record<string, boolean>>({})
   const [sortKey, setSortKey] = useState<
     | 'name'
     | 'team'
@@ -66,10 +108,20 @@ function App() {
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as ApiResponse
-        setPlayers(parsed.players)
+        const merged = mergeYearsCache(parsed.players, null)
+        setPlayers(merged)
         setUpdatedAt(parsed.updatedAt)
         setYear(parsed.year)
-        return
+        const hasStatspack = parsed.players.some(
+          (player) =>
+            Array.isArray(player.lastFiveSeasons) && player.lastFiveSeasons.length > 0
+        )
+        const hasYears = parsed.players.some(
+          (player) => player.firstYear !== null || player.ageYears !== null
+        )
+        if (hasStatspack && hasYears) {
+          return
+        }
       } catch {
         localStorage.removeItem(STORAGE_KEY)
       }
@@ -77,15 +129,21 @@ function App() {
 
     const loadStaticCache = async () => {
       try {
-        const response = await fetch(playersCacheUrl)
-        if (!response.ok) {
+        const [playersResponse, yearsResponse] = await Promise.all([
+          fetch(playersCacheUrl),
+          fetch(yearsCacheUrl),
+        ])
+        if (!playersResponse.ok) {
           throw new Error('Unable to load cached player data.')
         }
-        const data = (await response.json()) as ApiResponse
-        setPlayers(data.players)
+        const data = (await playersResponse.json()) as ApiResponse
+        const yearsCache = yearsResponse.ok ? ((await yearsResponse.json()) as YearsCache) : null
+        const merged = mergeYearsCache(data.players, yearsCache)
+        const nextPayload = { ...data, players: merged }
+        setPlayers(merged)
         setUpdatedAt(data.updatedAt)
         setYear(data.year)
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPayload))
       } catch (err) {
         setError(
           err instanceof Error
@@ -113,6 +171,22 @@ function App() {
         setAssignments(JSON.parse(savedAssignments) as AssignmentMap)
       } catch {
         localStorage.removeItem(ASSIGN_KEY)
+      }
+    }
+    const savedShortlist = localStorage.getItem(SHORTLIST_KEY)
+    if (savedShortlist) {
+      try {
+        setShortlistMap(JSON.parse(savedShortlist) as ShortlistMap)
+      } catch {
+        localStorage.removeItem(SHORTLIST_KEY)
+      }
+    }
+    const savedNotes = localStorage.getItem(SHORTLIST_NOTES_KEY)
+    if (savedNotes) {
+      try {
+        setShortlistNotes(JSON.parse(savedNotes) as ShortlistNotesMap)
+      } catch {
+        localStorage.removeItem(SHORTLIST_NOTES_KEY)
       }
     }
   }, [])
@@ -196,6 +270,47 @@ function App() {
     return assignments[keys.primary] ?? assignments[keys.legacy] ?? assignments[keys.nameOnly]
   }
 
+  const isShortlisted = (player: Player) => {
+    const keys = getDraftKeys(player)
+    return Boolean(shortlistMap[keys.primary] ?? shortlistMap[keys.legacy] ?? shortlistMap[keys.nameOnly])
+  }
+
+  const updateShortlist = (player: Player, nextValue: boolean) => {
+    const keys = getDraftKeys(player)
+    const next = { ...shortlistMap }
+    delete next[keys.legacy]
+    delete next[keys.nameOnly]
+    if (nextValue) {
+      next[keys.primary] = true
+    } else {
+      delete next[keys.primary]
+    }
+    setShortlistMap(next)
+    localStorage.setItem(SHORTLIST_KEY, JSON.stringify(next))
+  }
+
+  const updateShortlistNote = (player: Player, value: string) => {
+    const keys = getDraftKeys(player)
+    const next = { ...shortlistNotes, [keys.primary]: value }
+    delete next[keys.legacy]
+    delete next[keys.nameOnly]
+    if (!value.trim()) {
+      delete next[keys.primary]
+    }
+    setShortlistNotes(next)
+    localStorage.setItem(SHORTLIST_NOTES_KEY, JSON.stringify(next))
+  }
+
+  const isShortlistExpanded = (player: Player) => {
+    const key = getDraftKeys(player).primary
+    return Boolean(expandedShortlist[key])
+  }
+
+  const toggleShortlistExpanded = (player: Player) => {
+    const key = getDraftKeys(player).primary
+    setExpandedShortlist((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
   const updateAssignment = (player: Player, positionValue: string) => {
     const keys = getDraftKeys(player)
     const next = { ...assignments, [keys.primary]: positionValue }
@@ -221,6 +336,9 @@ function App() {
       localStorage.setItem(ASSIGN_KEY, JSON.stringify(nextAssignments))
     } else {
       next[keys.primary] = status
+      if (status === 'mine') {
+        updateShortlist(player, true)
+      }
     }
 
     setDraftMap(next)
@@ -231,6 +349,23 @@ function App() {
     () => players.filter((player) => draftStatusFor(player) === 'mine'),
     [players, draftMap]
   )
+
+  const shortlistPlayers = useMemo(
+    () => players.filter((player) => isShortlisted(player)),
+    [players, shortlistMap]
+  )
+
+  useEffect(() => {
+    if (!showShortlist) return
+    const adjustHeights = () => {
+      document.querySelectorAll<HTMLTextAreaElement>('.shortlist-notes').forEach((el) => {
+        el.style.height = 'auto'
+        el.style.height = `${el.scrollHeight}px`
+      })
+    }
+    const raf = window.requestAnimationFrame(adjustHeights)
+    return () => window.cancelAnimationFrame(raf)
+  }, [showShortlist, shortlistPlayers, shortlistNotes])
 
   const computeTeamSlots = () => {
     const limits = { DEF: 3, MID: 4, RUC: 1, FWD: 3, BENCH: 5 }
@@ -548,12 +683,137 @@ function App() {
             Reset Draft
           </button>
         </div>
+        <div className="control toggle">
+          <label>Shortlist</label>
+          <button
+            type="button"
+            onClick={() => setShowShortlist((prev) => !prev)}
+          >
+            {showShortlist ? 'Hide Shortlist' : `Show Shortlist (${shortlistPlayers.length})`}
+          </button>
+        </div>
         <button className="primary" type="button" disabled>
           Static Data
         </button>
       </section>
 
       {error && <div className="error">{error}</div>}
+
+      {showShortlist && (
+        <aside className="shortlist-drawer">
+          <div className="shortlist-drawer-header">
+            <div>
+              <h2>Shortlist</h2>
+              <span>{shortlistPlayers.length} players</span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn danger"
+              aria-label="Close shortlist"
+              onClick={() => setShowShortlist(false)}
+            >
+              ✕
+            </button>
+          </div>
+          {shortlistPlayers.length === 0 ? (
+            <p className="loading">No players shortlisted yet.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>Pos</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                  <th>2025 Games</th>
+                  <th>2025 Avg</th>
+                  <th>Last 5 Seasons Games</th>
+                  <th>Last 5 Seasons Avg</th>
+                  <th>Status</th>
+                  <th>Notes</th>
+                  <th></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {shortlistPlayers.map((player) => (
+                  <>
+                    <tr key={`shortlist-${player.id}-${player.name}`}>
+                      <td>
+                        <div className="cell-title">{player.name}</div>
+                        <div className="cell-sub">{player.team ?? '—'}</div>
+                      </td>
+                      <td>{player.positions.length ? player.positions.join('/') : '—'}</td>
+                      <td>{getDraftStatusLabel(player)}</td>
+                      <td>{formatPrice(player.price)}</td>
+                      <td>{player.previousGames ?? '—'}</td>
+                      <td>{player.previousAverage ?? '—'}</td>
+                      <td>{player.lastFiveGames ?? '—'}</td>
+                      <td>{player.lastFiveAverage ?? '—'}</td>
+                      <td>{player.statusText ?? player.status ?? '—'}</td>
+                      <td>
+                        <textarea
+                          className="shortlist-notes"
+                          placeholder="Notes"
+                          rows={1}
+                          value={shortlistNotes[getDraftKeys(player).primary] ?? ''}
+                          onChange={(event) => updateShortlistNote(player, event.target.value)}
+                          onInput={(event) => {
+                            const target = event.currentTarget
+                            target.style.height = 'auto'
+                            target.style.height = `${target.scrollHeight}px`
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Toggle last five seasons"
+                          onClick={() => toggleShortlistExpanded(player)}
+                        >
+                          {isShortlistExpanded(player) ? '▾' : '▸'}
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-btn danger"
+                          title="Remove from shortlist"
+                          onClick={() => updateShortlist(player, false)}
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                    {isShortlistExpanded(player) && (
+                      <tr key={`shortlist-detail-${player.id}-${player.name}`} className="shortlist-detail">
+                        <td colSpan={11}>
+                          <div className="shortlist-detail-grid">
+                            {(player.lastFiveSeasons?.length
+                              ? player.lastFiveSeasons
+                              : []
+                            ).map((season) => (
+                              <div key={`${player.id}-${season.season}`} className="shortlist-detail-card">
+                                <strong>{season.season}</strong>
+                                <span>{season.games} games</span>
+                                <span>{season.average ?? '—'} avg</span>
+                              </div>
+                            ))}
+                            {!player.lastFiveSeasons?.length && (
+                              <span className="cell-sub">No last five seasons data.</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </aside>
+      )}
 
       <section className="main-layout">
         <div className="table-wrapper">
@@ -643,13 +903,15 @@ function App() {
         <div className="table-wrapper">
           <div className="table-header">
             <h2>{showFitsOnly ? 'Player List (Eligible in My Team)' : 'Player List'}</h2>
-            <button
-              type="button"
-              className="mini-toggle"
-              onClick={() => setShowFitsOnly((prev) => !prev)}
-            >
-              {showFitsOnly ? 'Show All Available' : 'Show Fits My Team'}
-            </button>
+            <div className="table-actions">
+              <button
+                type="button"
+                className="mini-toggle"
+                onClick={() => setShowFitsOnly((prev) => !prev)}
+              >
+                {showFitsOnly ? 'Show All Available' : 'Show Fits My Team'}
+              </button>
+            </div>
           </div>
           <table>
             <thead>
@@ -657,6 +919,7 @@ function App() {
                 <th>Player</th>
                 <th>Draft Year</th>
                 <th>Age</th>
+                <th>Last 5 Seasons</th>
                 <th>Draft</th>
               </tr>
             </thead>
@@ -672,6 +935,16 @@ function App() {
                   </td>
                   <td>{formatDraftYearWithStatus(player)}</td>
                   <td>{player.ageYears ?? '—'}</td>
+                  <td>
+                    {player.lastFiveGames !== null && player.lastFiveGames !== undefined ? (
+                      <div className="stacked-stat">
+                        <span>{player.lastFiveGames} games</span>
+                        <span>{player.lastFiveAverage ?? '—'} avg</span>
+                      </div>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td>
                     <div className="row-actions">
                       <button
@@ -689,6 +962,14 @@ function App() {
                         onClick={() => updateDraftStatus(player, 'unavailable')}
                       >
                         ✕
+                      </button>
+                      <button
+                        type="button"
+                        className={`icon-btn shortlist ${isShortlisted(player) ? 'active' : ''}`}
+                        title={isShortlisted(player) ? 'Remove from shortlist' : 'Add to shortlist'}
+                        onClick={() => updateShortlist(player, !isShortlisted(player))}
+                      >
+                        ★
                       </button>
                     </div>
                   </td>

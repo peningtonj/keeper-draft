@@ -23,6 +23,8 @@ YEARS_CACHE_LOCK = threading.Lock()
 YEARS_CACHE: dict[str, dict[str, int | None]] = {}
 DRAFTGURU_LOCK = threading.Lock()
 DRAFTGURU_CACHE: dict[str, Any] = {"year": None, "data": {}}
+STATSPACK_LOCK = threading.Lock()
+STATSPACK_CACHE: dict[int, dict[str, Any]] = {}
 
 app = FastAPI(title="Keeper League Draft API")
 
@@ -221,6 +223,90 @@ def _load_supercoach_players() -> tuple[list[dict[str, Any]], int]:
     return players, data_year
 
 
+def _fetch_statspack(player_id: int, refresh: bool) -> dict[str, Any]:
+    with STATSPACK_LOCK:
+        cached = STATSPACK_CACHE.get(player_id)
+        if cached and not refresh:
+            return cached
+
+    url = (
+        "https://www.supercoach.com.au/2026/api/afl/classic/v1/completeStatspack"
+        f"?player_id={player_id}"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+        "Referer": "https://www.supercoach.com.au/",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return {}
+
+    stats = payload.get("playerStats") or []
+    season_totals: dict[int, dict[str, int]] = {}
+    for entry in stats:
+        season_raw = entry.get("season")
+        if not season_raw:
+            continue
+        try:
+            season = int(season_raw)
+        except (TypeError, ValueError):
+            continue
+        played = entry.get("played")
+        points = entry.get("points")
+        if played not in (1, True):
+            continue
+        if points is None:
+            continue
+        season_data = season_totals.setdefault(season, {"games": 0, "points": 0})
+        season_data["games"] += 1
+        season_data["points"] += int(points)
+
+    seasons_sorted = sorted(season_totals.keys(), reverse=True)
+    last_five = []
+    total_games = 0
+    total_points = 0
+    for season in seasons_sorted[:5]:
+        games = season_totals[season]["games"]
+        points = season_totals[season]["points"]
+        avg = round(points / games, 1) if games else None
+        last_five.append({"season": season, "games": games, "average": avg})
+        total_games += games
+        total_points += points
+
+    result = {
+        "lastFiveSeasons": last_five,
+        "lastFiveGames": total_games,
+        "lastFiveAverage": round(total_points / total_games, 1) if total_games else None,
+    }
+
+    with STATSPACK_LOCK:
+        STATSPACK_CACHE[player_id] = result
+    return result
+
+
+def _enrich_players_statspack(
+    players: list[dict[str, Any]],
+    refresh: bool,
+    target_player_id: int | None = None,
+) -> None:
+    for player in players:
+        player_id = player.get("id")
+        if target_player_id is not None and player_id != target_player_id:
+            continue
+        if not isinstance(player_id, int):
+            player.update({"lastFiveSeasons": [], "lastFiveGames": None, "lastFiveAverage": None})
+            continue
+        statspack = _fetch_statspack(player_id, refresh=refresh)
+        if statspack:
+            player.update(statspack)
+        else:
+            player.update({"lastFiveSeasons": [], "lastFiveGames": None, "lastFiveAverage": None})
+
+
 def _enrich_players_years(players: list[dict[str, Any]], refresh: bool, season_year: int) -> None:
     draftguru_data = _build_draftguru_index(season_year, refresh=refresh)
     fallback_index: dict[str, list[dict[str, int | None]]] = {}
@@ -289,6 +375,8 @@ def get_players(
     refresh: bool = Query(default=False),
     year: int | None = Query(default=None),
     enrich_years: bool = Query(default=False),
+    enrich_stats: bool = Query(default=False),
+    player_id: int | None = Query(default=None),
 ) -> dict[str, Any]:
     with CACHE_LOCK:
         cache_ready = CACHE["players"]
@@ -298,6 +386,8 @@ def get_players(
     players, target_year = _load_supercoach_players()
     if enrich_years:
         _enrich_players_years(players, refresh=refresh, season_year=target_year)
+    if enrich_stats:
+        _enrich_players_statspack(players, refresh=refresh, target_player_id=player_id)
     payload = {
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "year": target_year,
