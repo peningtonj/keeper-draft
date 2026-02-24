@@ -29,7 +29,6 @@ type ApiResponse = {
 
 const STORAGE_KEY = 'keeper-players-cache-v2'
 const DRAFT_KEY = 'keeper-draft-status-v1'
-const VIEW_KEY = 'keeper-team-view-v1'
 const ASSIGN_KEY = 'keeper-position-assignments-v1'
 
 type DraftStatus = 'mine' | 'unavailable' | null
@@ -46,7 +45,6 @@ function App() {
   const [position, setPosition] = useState('All')
   const [team, setTeam] = useState('All')
   const [ageCategory, setAgeCategory] = useState('Free Agents (Any Age)')
-  const [showMyTeam] = useState(true)
   const [showFitsOnly, setShowFitsOnly] = useState(false)
   const [draftMap, setDraftMap] = useState<DraftMap>({})
   const [assignments, setAssignments] = useState<AssignmentMap>({})
