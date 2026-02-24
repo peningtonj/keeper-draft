@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import playersCacheUrl from '../server/cache/players.json?url'
 
 type Player = {
   id: number | null
@@ -70,13 +71,33 @@ function App() {
         setPlayers(parsed.players)
         setUpdatedAt(parsed.updatedAt)
         setYear(parsed.year)
+        return
       } catch {
         localStorage.removeItem(STORAGE_KEY)
       }
     }
-    if (!cached) {
-      setError('No cached data available. Load data once locally to populate the cache.')
+
+    const loadStaticCache = async () => {
+      try {
+        const response = await fetch(playersCacheUrl)
+        if (!response.ok) {
+          throw new Error('Unable to load cached player data.')
+        }
+        const data = (await response.json()) as ApiResponse
+        setPlayers(data.players)
+        setUpdatedAt(data.updatedAt)
+        setYear(data.year)
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'No cached data available. Add players.json to the build.'
+        )
+      }
     }
+
+    void loadStaticCache()
   }, [])
 
   useEffect(() => {
