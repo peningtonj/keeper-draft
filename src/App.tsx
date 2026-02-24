@@ -45,7 +45,7 @@ function App() {
   const [position, setPosition] = useState('All')
   const [team, setTeam] = useState('All')
   const [ageCategory, setAgeCategory] = useState('Free Agents (Any Age)')
-  const [showFitsOnly, setShowFitsOnly] = useState(false)
+  const [showFitsOnly, setShowFitsOnly] = useState(true)
   const [draftMap, setDraftMap] = useState<DraftMap>({})
   const [assignments, setAssignments] = useState<AssignmentMap>({})
   const [sortKey, setSortKey] = useState<
@@ -57,8 +57,8 @@ function App() {
     | 'previousAverage'
     | 'previousGames'
     | 'status'
-  >('name')
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+  >('price')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
     document.title = 'Keeper League Draft Board'
