@@ -40,7 +40,6 @@ function App() {
   const [players, setPlayers] = useState<Player[]>([])
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [year, setYear] = useState<number | null>(null)
-  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [position, setPosition] = useState('All')
@@ -662,8 +661,7 @@ function App() {
               ))}
             </tbody>
           </table>
-          {status === 'loading' && <p className="loading">Loading player data…</p>}
-          {status !== 'loading' && filteredPlayers.length === 0 && (
+          {filteredPlayers.length === 0 && (
             <p className="loading">No players match these filters.</p>
           )}
         </div>
