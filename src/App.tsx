@@ -131,7 +131,19 @@ function App() {
     return 'free'
   }
 
-  const draftStatusFor = (player: Player) => draftMap[String(player.id ?? player.name)] ?? null
+  const getDraftKeys = (player: Player) => {
+    const name = player.name.trim()
+    const teamName = (player.team ?? '').trim()
+    const primary = `${name}|${teamName}`.toLowerCase()
+    const legacy = String(player.id ?? player.name)
+    const nameOnly = name.toLowerCase()
+    return { primary, legacy, nameOnly }
+  }
+
+  const draftStatusFor = (player: Player) => {
+    const keys = getDraftKeys(player)
+    return draftMap[keys.primary] ?? draftMap[keys.legacy] ?? draftMap[keys.nameOnly] ?? null
+  }
 
   const formatTeamAbbrev = (teamValue: string | null) => {
     if (!teamValue) return '—'
@@ -145,29 +157,37 @@ function App() {
     priceValue ? `$${priceValue.toLocaleString()}` : '—'
 
   const assignedPositionFor = (player: Player) => {
-    const key = String(player.id ?? player.name)
-    return assignments[key]
+    const keys = getDraftKeys(player)
+    return assignments[keys.primary] ?? assignments[keys.legacy] ?? assignments[keys.nameOnly]
   }
 
   const updateAssignment = (player: Player, positionValue: string) => {
-    const key = String(player.id ?? player.name)
-    const next = { ...assignments, [key]: positionValue }
+    const keys = getDraftKeys(player)
+    const next = { ...assignments, [keys.primary]: positionValue }
+    delete next[keys.legacy]
+    delete next[keys.nameOnly]
     setAssignments(next)
     localStorage.setItem(ASSIGN_KEY, JSON.stringify(next))
   }
 
   const updateDraftStatus = (player: Player, status: DraftStatus) => {
-    const key = String(player.id ?? player.name)
-    const next = { ...draftMap, [key]: status }
+    const keys = getDraftKeys(player)
+    const next = { ...draftMap }
+    delete next[keys.legacy]
+    delete next[keys.nameOnly]
+
     if (status === null) {
-      delete next[key]
-      if (assignments[key]) {
-        const nextAssignments = { ...assignments }
-        delete nextAssignments[key]
-        setAssignments(nextAssignments)
-        localStorage.setItem(ASSIGN_KEY, JSON.stringify(nextAssignments))
-      }
+      delete next[keys.primary]
+      const nextAssignments = { ...assignments }
+      delete nextAssignments[keys.primary]
+      delete nextAssignments[keys.legacy]
+      delete nextAssignments[keys.nameOnly]
+      setAssignments(nextAssignments)
+      localStorage.setItem(ASSIGN_KEY, JSON.stringify(nextAssignments))
+    } else {
+      next[keys.primary] = status
     }
+
     setDraftMap(next)
     localStorage.setItem(DRAFT_KEY, JSON.stringify(next))
   }
@@ -183,7 +203,7 @@ function App() {
     const resolvedAssignments: Record<string, string> = {}
 
     for (const player of myTeamPlayers) {
-      const key = String(player.id ?? player.name)
+      const key = getDraftKeys(player).primary
       const availablePositions = player.positions.length ? [...player.positions] : []
       const preferred = assignedPositionFor(player)
       let chosen: string | null = null
@@ -572,7 +592,7 @@ function App() {
                     {myTeamPlayers
                       .filter(
                         (player) =>
-                          (teamSlots.resolvedAssignments[String(player.id ?? player.name)] ?? 'BENCH') ===
+                          (teamSlots.resolvedAssignments[getDraftKeys(player).primary] ?? 'BENCH') ===
                           slot
                       )
                       .map((player) => (
@@ -593,7 +613,7 @@ function App() {
                           </div>
                           <select
                             value={
-                              teamSlots.resolvedAssignments[String(player.id ?? player.name)] ?? 'BENCH'
+                              teamSlots.resolvedAssignments[getDraftKeys(player).primary] ?? 'BENCH'
                             }
                             onChange={(event) => updateAssignment(player, event.target.value)}
                           >
