@@ -404,8 +404,8 @@ function App() {
           <p className="eyebrow">Super Coach Keeper League</p>
           <h1>Draft Board</h1>
           <p className="subtext">
-            Filter available players by position and review recent SuperCoach output. Use the
-            update button to reload the latest SuperCoach list.
+            Filter available players by position and review recent SuperCoach output. Click the
+            tick button to draft a player to your team, or the cross button to mark them as unavailable (drafted by someone else).
           </p>
         </div>
         <div className="summary">
