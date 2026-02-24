@@ -46,7 +46,7 @@ function App() {
   const [position, setPosition] = useState('All')
   const [team, setTeam] = useState('All')
   const [ageCategory, setAgeCategory] = useState('Free Agents (Any Age)')
-  const [showMyTeam, setShowMyTeam] = useState(false)
+  const [showMyTeam] = useState(true)
   const [showFitsOnly, setShowFitsOnly] = useState(false)
   const [draftMap, setDraftMap] = useState<DraftMap>({})
   const [assignments, setAssignments] = useState<AssignmentMap>({})
@@ -108,10 +108,6 @@ function App() {
       } catch {
         localStorage.removeItem(DRAFT_KEY)
       }
-    }
-    const savedView = localStorage.getItem(VIEW_KEY)
-    if (savedView === 'my-team') {
-      setShowMyTeam(true)
     }
     const savedAssignments = localStorage.getItem(ASSIGN_KEY)
     if (savedAssignments) {
@@ -540,91 +536,89 @@ function App() {
       {error && <div className="error">{error}</div>}
 
       <section className="main-layout">
-        {showMyTeam && (
-          <div className="table-wrapper">
-            <h2>My Team</h2>
-            <div className="summary">
-              <div>
-                <span>1st Year</span>
-                <strong>{teamSlots.ageCounts.year1} / {teamSlots.ageLimits.year1}</strong>
-              </div>
-              <div>
-                <span>2nd Year</span>
-                <strong>{teamSlots.ageCounts.year2} / {teamSlots.ageLimits.year2}</strong>
-              </div>
-              <div>
-                <span>3rd Year</span>
-                <strong>{teamSlots.ageCounts.year3} / {teamSlots.ageLimits.year3}</strong>
-              </div>
-              <div>
-                <span>4th Year</span>
-                <strong>{teamSlots.ageCounts.year4} / {teamSlots.ageLimits.year4}</strong>
-              </div>
-              <div>
-                <span>Free Agents</span>
-                <strong>{teamSlots.ageCounts.free} / {teamSlots.ageLimits.free}</strong>
-              </div>
-              <div>
-                <span>Senior (30+)</span>
-                <strong>{teamSlots.ageCounts.senior} / {teamSlots.ageLimits.senior}</strong>
-              </div>
+        <div className="table-wrapper">
+          <h2>My Team</h2>
+          <div className="summary">
+            <div>
+              <span>1st Year</span>
+              <strong>{teamSlots.ageCounts.year1} / {teamSlots.ageLimits.year1}</strong>
             </div>
-            <div className="formation">
-              {(['DEF', 'MID', 'RUC', 'FWD', 'BENCH'] as const).map((slot) => (
-                <div key={slot} className="formation-row">
-                  <h3
-                    className={
-                      slot === 'BENCH' && teamSlots.counts.BENCH > teamSlots.limits.BENCH
-                        ? 'over-limit'
-                        : undefined
-                    }
-                  >
-                    {slot} ({teamSlots.counts[slot]} / {teamSlots.limits[slot]})
-                  </h3>
-                  <div className="tile-row">
-                    {myTeamPlayers
-                      .filter(
-                        (player) =>
-                          (teamSlots.resolvedAssignments[getDraftKeys(player).primary] ?? 'BENCH') ===
-                          slot
-                      )
-                      .map((player) => (
-                        <div key={`tile-${player.id}-${player.name}`} className="player-tile">
-                          <div className="tile-header">
-                            <span>{player.name}</span>
-                            <button type="button" onClick={() => updateDraftStatus(player, null)}>
-                              ×
-                            </button>
-                          </div>
-                          <div className="tile-meta">
-                            <span>{player.team ?? '—'}</span>
-                            <span>
-                              {player.positions.length ? player.positions.join('/') : '—'}
-                            </span>
-                            <span>Draft {player.firstYear ?? '—'}</span>
-                            <span>Age {player.ageYears ?? '—'}</span>
-                          </div>
-                          <select
-                            value={
-                              teamSlots.resolvedAssignments[getDraftKeys(player).primary] ?? 'BENCH'
-                            }
-                            onChange={(event) => updateAssignment(player, event.target.value)}
-                          >
-                            {[...(player.positions.length ? player.positions : []), 'BENCH'].map((option) => (
-                              <option key={`${player.name}-${option}`} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              ))}
+            <div>
+              <span>2nd Year</span>
+              <strong>{teamSlots.ageCounts.year2} / {teamSlots.ageLimits.year2}</strong>
             </div>
-            {myTeamPlayers.length === 0 && <p className="loading">No players drafted yet.</p>}
+            <div>
+              <span>3rd Year</span>
+              <strong>{teamSlots.ageCounts.year3} / {teamSlots.ageLimits.year3}</strong>
+            </div>
+            <div>
+              <span>4th Year</span>
+              <strong>{teamSlots.ageCounts.year4} / {teamSlots.ageLimits.year4}</strong>
+            </div>
+            <div>
+              <span>Free Agents</span>
+              <strong>{teamSlots.ageCounts.free} / {teamSlots.ageLimits.free}</strong>
+            </div>
+            <div>
+              <span>Senior (30+)</span>
+              <strong>{teamSlots.ageCounts.senior} / {teamSlots.ageLimits.senior}</strong>
+            </div>
           </div>
-        )}
+          <div className="formation">
+            {(['DEF', 'MID', 'RUC', 'FWD', 'BENCH'] as const).map((slot) => (
+              <div key={slot} className="formation-row">
+                <h3
+                  className={
+                    slot === 'BENCH' && teamSlots.counts.BENCH > teamSlots.limits.BENCH
+                      ? 'over-limit'
+                      : undefined
+                  }
+                >
+                  {slot} ({teamSlots.counts[slot]} / {teamSlots.limits[slot]})
+                </h3>
+                <div className="tile-row">
+                  {myTeamPlayers
+                    .filter(
+                      (player) =>
+                        (teamSlots.resolvedAssignments[getDraftKeys(player).primary] ?? 'BENCH') ===
+                        slot
+                    )
+                    .map((player) => (
+                      <div key={`tile-${player.id}-${player.name}`} className="player-tile">
+                        <div className="tile-header">
+                          <span>{player.name}</span>
+                          <button type="button" onClick={() => updateDraftStatus(player, null)}>
+                            ×
+                          </button>
+                        </div>
+                        <div className="tile-meta">
+                          <span>{player.team ?? '—'}</span>
+                          <span>
+                            {player.positions.length ? player.positions.join('/') : '—'}
+                          </span>
+                          <span>Draft {player.firstYear ?? '—'}</span>
+                          <span>Age {player.ageYears ?? '—'}</span>
+                        </div>
+                        <select
+                          value={
+                            teamSlots.resolvedAssignments[getDraftKeys(player).primary] ?? 'BENCH'
+                          }
+                          onChange={(event) => updateAssignment(player, event.target.value)}
+                        >
+                          {[...(player.positions.length ? player.positions : []), 'BENCH'].map((option) => (
+                            <option key={`${player.name}-${option}`} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {myTeamPlayers.length === 0 && <p className="loading">No players drafted yet.</p>}
+        </div>
 
         <div className="table-wrapper">
           <div className="table-header">
