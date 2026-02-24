@@ -76,7 +76,7 @@ function App() {
       }
     }
     if (!cached) {
-      void fetchPlayers(false)
+      setError('No cached data available. Load data once locally to populate the cache.')
     }
   }, [])
 
@@ -375,29 +375,6 @@ function App() {
     return sorted
   }, [players, search, position, team, ageCategory, year, sortKey, sortDirection, showFitsOnly, draftMap, teamSlots])
 
-  const fetchPlayers = async (refresh: boolean) => {
-    setStatus('loading')
-    setError(null)
-    try {
-      const url = refresh
-        ? '/api/players?refresh=true&enrich_years=true'
-        : '/api/players?enrich_years=true'
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error('Unable to load players. Please try again.')
-      }
-      const data = (await response.json()) as ApiResponse
-      setPlayers(data.players)
-      setUpdatedAt(data.updatedAt)
-      setYear(data.year)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-      setStatus('idle')
-    } catch (err) {
-      setStatus('error')
-      setError(err instanceof Error ? err.message : 'Unable to load players.')
-    }
-  }
-
   const sortOptions: Array<{ value: 'name' | 'price'; label: string }> = [
     { value: 'name', label: 'Name' },
     { value: 'price', label: 'Price' },
@@ -535,12 +512,8 @@ function App() {
             Reset Draft
           </button>
         </div>
-        <button
-          className="primary"
-          onClick={() => void fetchPlayers(true)}
-          disabled={status === 'loading'}
-        >
-          {status === 'loading' ? 'Updating…' : 'Update Data'}
+        <button className="primary" type="button" disabled>
+          Static Data
         </button>
       </section>
 
