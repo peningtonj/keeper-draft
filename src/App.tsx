@@ -918,8 +918,7 @@ function App() {
               <tr>
                 <th>Player</th>
                 <th>Draft Year</th>
-                <th>Age</th>
-                <th>Last 5 Seasons Average</th>
+                <th className="last-five-col">Last 5 Seasons Average</th>
                 <th>Draft</th>
               </tr>
             </thead>
@@ -930,12 +929,12 @@ function App() {
                     <div className="cell-title">{player.name}</div>
                     <div className="cell-sub">
                       {formatTeamAbbrev(player.team)} · {formatPrice(player.price)} ·
-                      {player.positions.length ? player.positions.join('/') : '—'}
+                      {player.positions.length ? player.positions.join('/') : '—'} ·
+                      Age {player.ageYears ?? '—'}
                     </div>
                   </td>
                   <td>{formatDraftYearWithStatus(player)}</td>
-                  <td>{player.ageYears ?? '—'}</td>
-                  <td>
+                  <td className="last-five-col">
                     {player.lastFiveSeasons && player.lastFiveSeasons.length > 0 ? (
                       <div className="stacked-stat">
                         <span>
