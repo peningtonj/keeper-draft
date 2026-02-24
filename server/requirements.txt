@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pyAFL
+pandas
+beautifulsoup4
+lxml
+requests
