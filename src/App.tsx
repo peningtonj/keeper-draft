@@ -621,7 +621,7 @@ function App() {
 
         <div className="table-wrapper">
           <div className="table-header">
-            <h2>Player List</h2>
+            <h2>{showFitsOnly ? 'Player List (Eligible in My Team)' : 'Player List'}</h2>
             <button
               type="button"
               className="mini-toggle"
