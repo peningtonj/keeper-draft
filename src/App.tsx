@@ -919,7 +919,7 @@ function App() {
                 <th>Player</th>
                 <th>Draft Year</th>
                 <th>Age</th>
-                <th>Last 5 Seasons</th>
+                <th>Last 5 Seasons Average</th>
                 <th>Draft</th>
               </tr>
             </thead>
@@ -936,10 +936,18 @@ function App() {
                   <td>{formatDraftYearWithStatus(player)}</td>
                   <td>{player.ageYears ?? '—'}</td>
                   <td>
-                    {player.lastFiveGames !== null && player.lastFiveGames !== undefined ? (
+                    {player.lastFiveSeasons && player.lastFiveSeasons.length > 0 ? (
                       <div className="stacked-stat">
-                        <span>{player.lastFiveGames} games</span>
-                        <span>{player.lastFiveAverage ?? '—'} avg</span>
+                        <span>
+                          {(
+                            player.lastFiveSeasons.reduce(
+                              (total, season) => total + (season.games ?? 0),
+                              0
+                            ) / player.lastFiveSeasons.length
+                          ).toFixed(1)}{' '}
+                          games
+                        </span>
+                        <span>{player.lastFiveAverage ?? '—'} points</span>
                       </div>
                     ) : (
                       '—'
