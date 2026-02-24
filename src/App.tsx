@@ -301,7 +301,8 @@ function App() {
         break
       }
     }
-    return hasPositionSlot
+    const benchAvailable = counts.BENCH < limits.BENCH
+    return hasPositionSlot || benchAvailable
   }
 
   const filteredPlayers = useMemo(() => {
