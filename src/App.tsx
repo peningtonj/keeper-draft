@@ -145,6 +145,27 @@ function App() {
     return 'free'
   }
 
+  const getDraftStatusLabel = (player: Player) => {
+    if (player.ageYears !== null && player.ageYears >= 30) {
+      return 'Snr'
+    }
+    const draftYear = player.firstYear
+    if (draftYear === null || draftYear === undefined) {
+      return 'FA'
+    }
+    if (draftYear === seasonYear - 1) return '1st'
+    if (draftYear === seasonYear - 2) return '2nd'
+    if (draftYear === seasonYear - 3) return '3rd'
+    if (draftYear === seasonYear - 4) return '4th'
+    return 'FA'
+  }
+
+  const formatDraftYearWithStatus = (player: Player) => {
+    const yearText = player.firstYear ?? '—'
+    const statusText = getDraftStatusLabel(player)
+    return `${yearText} (${statusText})`
+  }
+
   const getDraftKeys = (player: Player) => {
     const name = player.name.trim()
     const teamName = (player.team ?? '').trim()
@@ -595,7 +616,7 @@ function App() {
                           <span>
                             {player.positions.length ? player.positions.join('/') : '—'}
                           </span>
-                          <span>Draft {player.firstYear ?? '—'}</span>
+                          <span>Draft {formatDraftYearWithStatus(player)}</span>
                           <span>Age {player.ageYears ?? '—'}</span>
                         </div>
                         <select
@@ -649,7 +670,7 @@ function App() {
                       {player.positions.length ? player.positions.join('/') : '—'}
                     </div>
                   </td>
-                  <td>{player.firstYear ?? '—'}</td>
+                  <td>{formatDraftYearWithStatus(player)}</td>
                   <td>{player.ageYears ?? '—'}</td>
                   <td>
                     <div className="row-actions">
