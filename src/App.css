@@ -294,6 +294,31 @@ button:disabled {
   overflow: auto;
 }
 
+.unavailable-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 42vw;
+  max-width: 640px;
+  min-width: 300px;
+  padding: 1.25rem 1.5rem 2rem;
+  background: #ffffff;
+  box-shadow: 24px 0 48px rgba(15, 23, 42, 0.25);
+  z-index: 20;
+  overflow: auto;
+  animation: slide-in-left 0.2s ease-out;
+}
+
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 .shortlist-drawer-header {
   display: flex;
   align-items: center;

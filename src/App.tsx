@@ -90,6 +90,7 @@ function App() {
   const [shortlistNotes, setShortlistNotes] = useState<ShortlistNotesMap>({})
   const [showShortlist, setShowShortlist] = useState(false)
   const [expandedShortlist, setExpandedShortlist] = useState<Record<string, boolean>>({})
+  const [showUnavailable, setShowUnavailable] = useState(false)
   const [sortKey, setSortKey] = useState<
     | 'name'
     | 'team'
@@ -347,6 +348,11 @@ function App() {
 
   const myTeamPlayers = useMemo(
     () => players.filter((player) => draftStatusFor(player) === 'mine'),
+    [players, draftMap]
+  )
+
+  const unavailablePlayers = useMemo(
+    () => players.filter((player) => draftStatusFor(player) === 'unavailable'),
     [players, draftMap]
   )
 
@@ -692,12 +698,74 @@ function App() {
             {showShortlist ? 'Hide Shortlist' : `Show Shortlist (${shortlistPlayers.length})`}
           </button>
         </div>
+        <div className="control toggle">
+          <label>Drafted List</label>
+          <button type="button" onClick={() => setShowUnavailable((prev) => !prev)}>
+            {showUnavailable ? 'Hide Drafted' : `Show Drafted (${unavailablePlayers.length})`}
+          </button>
+        </div>
         <button className="primary" type="button" disabled>
           Static Data
         </button>
       </section>
 
       {error && <div className="error">{error}</div>}
+
+      {showUnavailable && (
+        <aside className="unavailable-drawer">
+          <div className="shortlist-drawer-header">
+            <div>
+              <h2>Drafted by Others</h2>
+              <span>{unavailablePlayers.length} players</span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn danger"
+              aria-label="Close drafted list"
+              onClick={() => setShowUnavailable(false)}
+            >
+              ✕
+            </button>
+          </div>
+          {unavailablePlayers.length === 0 ? (
+            <p className="loading">No unavailable players yet.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>Draft Year</th>
+                  <th>Undo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unavailablePlayers.map((player) => (
+                  <tr key={`unavailable-${player.id}-${player.name}`}>
+                    <td className="compact-cell">
+                      <div className="cell-title">{player.name}</div>
+                      <div className="cell-sub">
+                        {formatTeamAbbrev(player.team)} ·
+                        {player.positions.length ? player.positions.join('/') : '—'}
+                      </div>
+                    </td>
+                    <td>{formatDraftYearWithStatus(player)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Undo mark as drafted"
+                        onClick={() => updateDraftStatus(player, null)}
+                      >
+                        ↺
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </aside>
+      )}
 
       {showShortlist && (
         <aside className="shortlist-drawer">
@@ -724,6 +792,7 @@ function App() {
                   <th>Player</th>
                   <th>Pos</th>
                   <th>Category</th>
+                  <th>Age</th>
                   <th>Price</th>
                   <th>2025 Games</th>
                   <th>2025 Avg</th>
@@ -745,6 +814,7 @@ function App() {
                       </td>
                       <td>{player.positions.length ? player.positions.join('/') : '—'}</td>
                       <td>{getDraftStatusLabel(player)}</td>
+                      <td>{player.ageYears ?? '—'}</td>
                       <td>{formatPrice(player.price)}</td>
                       <td>{player.previousGames ?? '—'}</td>
                       <td>{player.previousAverage ?? '—'}</td>
