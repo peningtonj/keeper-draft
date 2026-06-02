@@ -331,6 +331,13 @@ button:disabled {
   margin: 0 0 0.25rem;
 }
 
+.drawer-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
 .shortlist-notes {
   width: 100%;
   min-width: 160px;
@@ -458,6 +465,9 @@ tbody tr:hover {
 @media (max-width: 720px) {
   .summary {
     min-width: unset;
+  }
+  .drawer-filters {
+    grid-template-columns: 1fr;
   }
   th:nth-child(5),
   th:nth-child(6),

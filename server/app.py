@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -13,10 +14,38 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 CACHE_PATH = os.path.join(CACHE_DIR, "players.json")
-PLAYERS_PATH = os.path.join(os.path.dirname(__file__), "players.json")
+PLAYERS_DATA_PATH = os.path.join(CACHE_DIR, "players_data.json")
+PLAYERS_PATH = os.path.join(ROOT_DIR, "players.json")
 YEARS_CACHE_PATH = os.path.join(CACHE_DIR, "years.json")
+DRAFT_PATH = os.path.join(CACHE_DIR, "DRAFT.csv")
+MSD_PATH = os.path.join(CACHE_DIR, "MSD.csv")
+CSV_CANDIDATES = [
+    os.path.join(ROOT_DIR, "ITDFL LEAGUE - PLAYERS (1).csv"),
+    os.path.join(ROOT_DIR, "ITDFL LEAGUE - PLAYERS.csv"),
+]
+TEAM_ABBREV_MAP = {
+    "ADE": "Adelaide",
+    "BRL": "Brisbane",
+    "CAR": "Carlton",
+    "COL": "Collingwood",
+    "ESS": "Essendon",
+    "FRE": "Fremantle",
+    "GCS": "Gold Coast",
+    "GEE": "Geelong",
+    "GWS": "GWS Giants",
+    "HAW": "Hawthorn",
+    "MEL": "Melbourne",
+    "NTH": "North Melbourne",
+    "PTA": "Port Adelaide",
+    "RIC": "Richmond",
+    "STK": "St Kilda",
+    "SYD": "Sydney",
+    "WBD": "Western Bulldogs",
+    "WCE": "West Coast",
+}
 CACHE_LOCK = threading.Lock()
 CACHE: dict[str, Any] = {"updatedAt": None, "year": None, "players": []}
 YEARS_CACHE_LOCK = threading.Lock()
@@ -72,6 +101,11 @@ def _save_years_cache(payload: dict[str, dict[str, int | None]]) -> None:
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(YEARS_CACHE_PATH, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False)
+
+
+def _load_json_file(path: str) -> Any:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def _normalize_player_key(name: str) -> str:
@@ -175,11 +209,151 @@ def _build_draftguru_index(season_year: int, refresh: bool) -> dict[str, dict[st
     return data
 
 
-def _load_supercoach_players() -> tuple[list[dict[str, Any]], int]:
-    if not os.path.exists(PLAYERS_PATH):
-        return [], datetime.now(timezone.utc).year
-    with open(PLAYERS_PATH, "r", encoding="utf-8") as handle:
-        raw_players = json.load(handle)
+def _load_raw_supercoach_source() -> list[dict[str, Any]]:
+    for path in (PLAYERS_DATA_PATH, PLAYERS_PATH, CACHE_PATH):
+        if not os.path.exists(path):
+            continue
+        try:
+            payload = _load_json_file(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        raw_players: list[dict[str, Any]] | None = None
+        if isinstance(payload, list):
+            raw_players = payload
+        elif isinstance(payload, dict) and isinstance(payload.get("players"), list):
+            candidate_players = payload["players"]
+            if candidate_players and isinstance(candidate_players[0], dict):
+                sample = candidate_players[0]
+                if "first_name" in sample or "last_name" in sample:
+                    raw_players = candidate_players
+
+        if raw_players is not None:
+            return raw_players
+
+    return []
+
+
+def _find_keeper_csv_path() -> str | None:
+    for path in CSV_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _build_draft_csv_lookup() -> tuple[dict[str, dict[str, str]], list[str]]:
+    if not os.path.exists(DRAFT_PATH):
+        return {}, []
+
+    drafted_lookup: dict[str, dict[str, str]] = {}
+    team_names: list[str] = []
+    seen_teams: set[str] = set()
+
+    with open(DRAFT_PATH, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            team_name = str(row.get("TEAM") or "").strip()
+            player_name = str(row.get("PLAYER") or "").strip()
+            pick = str(row.get("PICK") or "").strip()
+            if not team_name or not player_name:
+                continue
+
+            if team_name not in seen_teams:
+                seen_teams.add(team_name)
+                team_names.append(team_name)
+
+            drafted_lookup[_normalize_player_key(player_name)] = {
+                "team": team_name,
+                "pick": pick,
+            }
+
+    return drafted_lookup, team_names
+
+
+def _build_drafted_lookup_from_csv() -> dict[str, str]:
+    csv_path = _find_keeper_csv_path()
+    if not csv_path:
+        return {}
+
+    drafted_lookup: dict[str, str] = {}
+    with open(csv_path, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            pick = str(row.get("Pick") or "").strip()
+            if not pick:
+                continue
+
+            name = str(row.get("Player Name") or "").strip()
+            team_abbrev = str(row.get("Team") or "").strip().upper()
+            team_name = TEAM_ABBREV_MAP.get(team_abbrev)
+            if not name or not team_name:
+                continue
+
+            drafted_lookup[_cache_key(name, team_name)] = pick
+
+    return drafted_lookup
+
+
+def _apply_csv_draft_status(players: list[dict[str, Any]]) -> None:
+    drafted_lookup = _build_drafted_lookup_from_csv()
+    for player in players:
+        pick = drafted_lookup.get(_cache_key(player.get("name", ""), player.get("team")))
+        player["draftStatus"] = "unavailable" if pick else None
+        player["draftPick"] = pick if pick else None
+
+
+def _apply_draft_csv_assignments(players: list[dict[str, Any]]) -> list[str]:
+    drafted_lookup, team_names = _build_draft_csv_lookup()
+    for player in players:
+        draft_entry = drafted_lookup.get(_normalize_player_key(player.get("name", "")))
+        player["draftedByTeam"] = draft_entry.get("team") if draft_entry else None
+        player["draftedByPick"] = draft_entry.get("pick") if draft_entry else None
+    return team_names
+
+
+def _apply_msd_csv_changes(players: list[dict[str, Any]], team_names: list[str]) -> list[str]:
+    if not os.path.exists(MSD_PATH):
+        return team_names
+
+    player_lookup = {
+        _normalize_player_key(str(player.get("name", ""))): player
+        for player in players
+        if player.get("name")
+    }
+    next_team_names = list(team_names)
+
+    with open(MSD_PATH, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            team_name = str(row.get("Team") or "").strip()
+            dropped_name = str(row.get("Player Dropped") or "").strip()
+            drafted_name = str(row.get("Player Drafted") or "").strip()
+            pick = str(row.get("Pick") or "").strip()
+
+            if team_name and team_name not in next_team_names:
+                next_team_names.append(team_name)
+
+            dropped_player = player_lookup.get(_normalize_player_key(dropped_name))
+            if dropped_player is not None:
+                dropped_player["draftStatus"] = None
+                dropped_player["draftPick"] = None
+                dropped_player["draftedByTeam"] = None
+                dropped_player["draftedByPick"] = None
+
+            drafted_player = player_lookup.get(_normalize_player_key(drafted_name))
+            if drafted_player is not None:
+                drafted_player["draftStatus"] = "unavailable"
+                drafted_player["draftPick"] = f"MSD {pick}" if pick else "MSD"
+                drafted_player["draftedByTeam"] = team_name or None
+                drafted_player["draftedByPick"] = pick or None
+
+    return next_team_names
+
+
+def _load_supercoach_players() -> tuple[list[dict[str, Any]], int, list[str]]:
+    raw_players = _load_raw_supercoach_source()
+    if not raw_players:
+        return [], datetime.now(timezone.utc).year, []
 
     players: list[dict[str, Any]] = []
     data_year = datetime.now(timezone.utc).year
@@ -205,6 +379,9 @@ def _load_supercoach_players() -> tuple[list[dict[str, Any]], int]:
                 "name": name,
                 "team": team,
                 "positions": positions,
+                "currentGames": latest_stats.get("total_games"),
+                "currentAverage": latest_stats.get("avg"),
+                "currentTotal": latest_stats.get("total_points"),
                 "previousGames": raw.get("previous_games"),
                 "previousAverage": raw.get("previous_average"),
                 "previousTotal": raw.get("previous_total"),
@@ -216,11 +393,18 @@ def _load_supercoach_players() -> tuple[list[dict[str, Any]], int]:
                 "yearsPlaying": None,
                 "firstYear": None,
                 "ageYears": None,
+                "draftStatus": None,
+                "draftPick": None,
+                "draftedByTeam": None,
+                "draftedByPick": None,
             }
         )
 
+    _apply_csv_draft_status(players)
+    draft_teams = _apply_draft_csv_assignments(players)
+    draft_teams = _apply_msd_csv_changes(players, draft_teams)
     players.sort(key=lambda item: item.get("name") or "")
-    return players, data_year
+    return players, data_year, draft_teams
 
 
 def _fetch_statspack(player_id: int, refresh: bool) -> dict[str, Any]:
@@ -383,7 +567,7 @@ def get_players(
         if cache_ready and not refresh and not enrich_years:
             return CACHE
 
-    players, target_year = _load_supercoach_players()
+    players, target_year, draft_teams = _load_supercoach_players()
     if enrich_years:
         _enrich_players_years(players, refresh=refresh, season_year=target_year)
     if enrich_stats:
@@ -392,6 +576,7 @@ def get_players(
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "year": target_year,
         "players": players,
+        "draftTeams": draft_teams,
         "count": len(players),
     }
     with CACHE_LOCK:

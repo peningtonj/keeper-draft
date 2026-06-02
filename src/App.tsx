@@ -3,11 +3,17 @@ import './App.css'
 import playersCacheUrl from '../server/cache/players.json?url'
 import yearsCacheUrl from '../server/cache/years.json?url'
 
+type DraftStatus = 'mine' | 'unavailable' | null
+type ManualDraftStatus = 'mine' | 'unavailable' | 'available'
+
 type Player = {
   id: number | null
   name: string
   team: string | null
   positions: string[]
+  currentGames: number | null
+  currentAverage: number | null
+  currentTotal: number | null
   previousGames: number | null
   previousAverage: number | null
   previousTotal: number | null
@@ -22,12 +28,17 @@ type Player = {
   lastFiveSeasons?: Array<{ season: number; games: number; average: number | null }>
   lastFiveGames?: number | null
   lastFiveAverage?: number | null
+  draftStatus?: DraftStatus
+  draftPick?: string | null
+  draftedByTeam?: string | null
+  draftedByPick?: string | null
 }
 
 type ApiResponse = {
   updatedAt: string
   year: number
   players: Player[]
+  draftTeams?: string[]
   count: number
 }
 
@@ -35,13 +46,12 @@ type YearsCache = Record<string, { yearsPlaying: number | null; firstYear: numbe
 
 const STORAGE_KEY = 'keeper-players-cache-v2'
 const DRAFT_KEY = 'keeper-draft-status-v1'
+const DRAFT_TEAM_KEY = 'keeper-draft-team-v1'
 const ASSIGN_KEY = 'keeper-position-assignments-v1'
 const SHORTLIST_KEY = 'keeper-shortlist-v1'
 const SHORTLIST_NOTES_KEY = 'keeper-shortlist-notes-v1'
 
-type DraftStatus = 'mine' | 'unavailable' | null
-
-type DraftMap = Record<string, DraftStatus>
+type DraftMap = Record<string, ManualDraftStatus>
 type AssignmentMap = Record<string, string>
 type ShortlistMap = Record<string, boolean>
 type ShortlistNotesMap = Record<string, string>
@@ -85,18 +95,24 @@ function App() {
   const [ageCategory, setAgeCategory] = useState('Free Agents (Any Age)')
   const [showFitsOnly, setShowFitsOnly] = useState(true)
   const [draftMap, setDraftMap] = useState<DraftMap>({})
+  const [draftTeams, setDraftTeams] = useState<string[]>([])
+  const [selectedDraftTeam, setSelectedDraftTeam] = useState('')
   const [assignments, setAssignments] = useState<AssignmentMap>({})
   const [shortlistMap, setShortlistMap] = useState<ShortlistMap>({})
   const [shortlistNotes, setShortlistNotes] = useState<ShortlistNotesMap>({})
   const [showShortlist, setShowShortlist] = useState(false)
   const [expandedShortlist, setExpandedShortlist] = useState<Record<string, boolean>>({})
   const [showUnavailable, setShowUnavailable] = useState(false)
+  const [unavailableSearch, setUnavailableSearch] = useState('')
+  const [unavailableDraftTeam, setUnavailableDraftTeam] = useState('All')
   const [sortKey, setSortKey] = useState<
     | 'name'
     | 'team'
     | 'positions'
     | 'firstYear'
     | 'price'
+    | 'currentTotal'
+    | 'currentAverage'
     | 'previousAverage'
     | 'previousGames'
     | 'status'
@@ -113,16 +129,7 @@ function App() {
         setPlayers(merged)
         setUpdatedAt(parsed.updatedAt)
         setYear(parsed.year)
-        const hasStatspack = parsed.players.some(
-          (player) =>
-            Array.isArray(player.lastFiveSeasons) && player.lastFiveSeasons.length > 0
-        )
-        const hasYears = parsed.players.some(
-          (player) => player.firstYear !== null || player.ageYears !== null
-        )
-        if (hasStatspack && hasYears) {
-          return
-        }
+        setDraftTeams(parsed.draftTeams ?? [])
       } catch {
         localStorage.removeItem(STORAGE_KEY)
       }
@@ -144,6 +151,7 @@ function App() {
         setPlayers(merged)
         setUpdatedAt(data.updatedAt)
         setYear(data.year)
+        setDraftTeams(data.draftTeams ?? [])
         localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPayload))
       } catch (err) {
         setError(
@@ -165,6 +173,10 @@ function App() {
       } catch {
         localStorage.removeItem(DRAFT_KEY)
       }
+    }
+    const savedDraftTeam = localStorage.getItem(DRAFT_TEAM_KEY)
+    if (savedDraftTeam) {
+      setSelectedDraftTeam(savedDraftTeam)
     }
     const savedAssignments = localStorage.getItem(ASSIGN_KEY)
     if (savedAssignments) {
@@ -209,9 +221,6 @@ function App() {
   const seasonYear = year ?? new Date().getFullYear()
 
   const getAgeSlot = (player: Player) => {
-    if (player.ageYears !== null && player.ageYears >= 30) {
-      return 'senior'
-    }
     const draftYear = player.firstYear
     if (draftYear === seasonYear - 1) return 'year1'
     if (draftYear === seasonYear - 2) return 'year2'
@@ -221,9 +230,6 @@ function App() {
   }
 
   const getDraftStatusLabel = (player: Player) => {
-    if (player.ageYears !== null && player.ageYears >= 30) {
-      return 'Snr'
-    }
     const draftYear = player.firstYear
     if (draftYear === null || draftYear === undefined) {
       return 'FA'
@@ -252,7 +258,17 @@ function App() {
 
   const draftStatusFor = (player: Player) => {
     const keys = getDraftKeys(player)
-    return draftMap[keys.primary] ?? draftMap[keys.legacy] ?? draftMap[keys.nameOnly] ?? null
+    const manualStatus = draftMap[keys.primary] ?? draftMap[keys.legacy] ?? draftMap[keys.nameOnly]
+    if (manualStatus !== undefined) {
+      return manualStatus === 'available' ? null : manualStatus
+    }
+    if (selectedDraftTeam && player.draftedByTeam) {
+      return player.draftedByTeam === selectedDraftTeam ? 'mine' : 'unavailable'
+    }
+    return (
+      player.draftStatus ??
+      null
+    )
   }
 
   const formatTeamAbbrev = (teamValue: string | null) => {
@@ -328,7 +344,15 @@ function App() {
     delete next[keys.nameOnly]
 
     if (status === null) {
-      delete next[keys.primary]
+      const hasInheritedStatus =
+        (selectedDraftTeam && Boolean(player.draftedByTeam)) ||
+        player.draftStatus === 'mine' ||
+        player.draftStatus === 'unavailable'
+      if (hasInheritedStatus) {
+        next[keys.primary] = 'available'
+      } else {
+        delete next[keys.primary]
+      }
       const nextAssignments = { ...assignments }
       delete nextAssignments[keys.primary]
       delete nextAssignments[keys.legacy]
@@ -348,13 +372,35 @@ function App() {
 
   const myTeamPlayers = useMemo(
     () => players.filter((player) => draftStatusFor(player) === 'mine'),
-    [players, draftMap]
+    [players, draftMap, selectedDraftTeam]
   )
 
   const unavailablePlayers = useMemo(
     () => players.filter((player) => draftStatusFor(player) === 'unavailable'),
-    [players, draftMap]
+    [players, draftMap, selectedDraftTeam]
   )
+
+  const unavailableDraftTeams = useMemo(() => {
+    const list = Array.from(
+      new Set(unavailablePlayers.map((player) => player.draftedByTeam).filter(Boolean))
+    )
+      .map((value) => value as string)
+      .sort()
+    return ['All', ...list]
+  }, [unavailablePlayers])
+
+  const filteredUnavailablePlayers = useMemo(() => {
+    const searchTerm = unavailableSearch.trim().toLowerCase()
+    return unavailablePlayers.filter((player) => {
+      const matchesSearch =
+        !searchTerm ||
+        player.name.toLowerCase().includes(searchTerm) ||
+        (player.team ?? '').toLowerCase().includes(searchTerm)
+      const matchesDraftTeam =
+        unavailableDraftTeam === 'All' || player.draftedByTeam === unavailableDraftTeam
+      return matchesSearch && matchesDraftTeam
+    })
+  }, [unavailablePlayers, unavailableSearch, unavailableDraftTeam])
 
   const shortlistPlayers = useMemo(
     () => players.filter((player) => isShortlisted(player)),
@@ -425,10 +471,9 @@ function App() {
       year2: 2,
       year3: 2,
       year4: 2,
-      free: 6,
-      senior: 2,
+      free: 8,
     }
-    const ageCounts = { year1: 0, year2: 0, year3: 0, year4: 0, free: 0, senior: 0 }
+    const ageCounts = { year1: 0, year2: 0, year3: 0, year4: 0, free: 0 }
     for (const player of myTeamPlayers) {
       const slot = getAgeSlot(player)
       if (slot !== 'free' && ageCounts[slot] >= ageLimits[slot] && ageCounts.free < ageLimits.free) {
@@ -489,9 +534,6 @@ function App() {
         if (ageCategory === '4th Year') {
           return firstYear === seasonYear - 4
         }
-        if (ageCategory === 'Senior (30+)') {
-          return player.ageYears !== null && player.ageYears >= 30
-        }
         return true
       })()
       const matchesFit = !showFitsOnly || fitsMyTeam(player)
@@ -512,6 +554,10 @@ function App() {
             return a.firstYear ?? -1
           case 'price':
             return a.price ?? -1
+          case 'currentTotal':
+            return a.currentTotal ?? -1
+          case 'currentAverage':
+            return a.currentAverage ?? -1
           case 'previousAverage':
             return a.previousAverage ?? -1
           case 'previousGames':
@@ -534,6 +580,10 @@ function App() {
             return b.firstYear ?? -1
           case 'price':
             return b.price ?? -1
+          case 'currentTotal':
+            return b.currentTotal ?? -1
+          case 'currentAverage':
+            return b.currentAverage ?? -1
           case 'previousAverage':
             return b.previousAverage ?? -1
           case 'previousGames':
@@ -550,14 +600,28 @@ function App() {
       return String(valueA).localeCompare(String(valueB)) * direction
     })
     return sorted
-  }, [players, search, position, team, ageCategory, year, sortKey, sortDirection, showFitsOnly, draftMap, teamSlots])
+  }, [players, search, position, team, ageCategory, year, sortKey, sortDirection, showFitsOnly, draftMap, selectedDraftTeam, teamSlots])
 
-  const sortOptions: Array<{ value: 'name' | 'price'; label: string }> = [
+  const sortOptions: Array<{
+    value: 'name' | 'price' | 'currentTotal' | 'currentAverage'
+    label: string
+  }> = [
     { value: 'name', label: 'Name' },
     { value: 'price', label: 'Price' },
+    { value: 'currentTotal', label: `${year ?? 'Current'} Total` },
+    { value: 'currentAverage', label: `${year ?? 'Current'} Average` },
   ]
 
   const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString() : 'Not loaded'
+
+  const handleDraftTeamChange = (teamName: string) => {
+    setSelectedDraftTeam(teamName)
+    if (teamName) {
+      localStorage.setItem(DRAFT_TEAM_KEY, teamName)
+    } else {
+      localStorage.removeItem(DRAFT_TEAM_KEY)
+    }
+  }
 
   return (
     <div className="app">
@@ -626,6 +690,21 @@ function App() {
           </select>
         </div>
         <div className="control">
+          <label htmlFor="draft-team">My Draft Team</label>
+          <select
+            id="draft-team"
+            value={selectedDraftTeam}
+            onChange={(event) => handleDraftTeamChange(event.target.value)}
+          >
+            <option value="">None</option>
+            {draftTeams.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="control">
           <label htmlFor="age-category">Age Category</label>
           <select
             id="age-category"
@@ -639,7 +718,6 @@ function App() {
                 '2nd Year',
                 '3rd Year',
                 '4th Year',
-                'Senior (30+)',
               ].map((option) => (
                 <option key={option} value={option}>
                   {option}
@@ -654,9 +732,9 @@ function App() {
             id="sort-by"
             value={sortKey}
             onChange={(event) => {
-              const nextValue = event.target.value as 'name' | 'price'
+              const nextValue = event.target.value as 'name' | 'price' | 'currentTotal' | 'currentAverage'
               setSortKey(nextValue)
-              setSortDirection(nextValue === 'price' ? 'desc' : 'asc')
+              setSortDirection(nextValue === 'name' ? 'asc' : 'desc')
             }}
           >
             {sortOptions.map((option) => (
@@ -716,7 +794,9 @@ function App() {
           <div className="shortlist-drawer-header">
             <div>
               <h2>Drafted by Others</h2>
-              <span>{unavailablePlayers.length} players</span>
+              <span>
+                {filteredUnavailablePlayers.length} of {unavailablePlayers.length} players
+              </span>
             </div>
             <button
               type="button"
@@ -730,22 +810,45 @@ function App() {
           {unavailablePlayers.length === 0 ? (
             <p className="loading">No unavailable players yet.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Player</th>
-                  <th>Draft Year</th>
-                  <th>Undo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {unavailablePlayers.map((player) => (
+            <>
+              <div className="drawer-filters">
+                <input
+                  type="search"
+                  placeholder="Filter drafted players"
+                  value={unavailableSearch}
+                  onChange={(event) => setUnavailableSearch(event.target.value)}
+                />
+                <select
+                  value={unavailableDraftTeam}
+                  onChange={(event) => setUnavailableDraftTeam(event.target.value)}
+                >
+                  {unavailableDraftTeams.map((draftTeam) => (
+                    <option key={draftTeam} value={draftTeam}>
+                      {draftTeam === 'All' ? 'All Draft Teams' : draftTeam}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {filteredUnavailablePlayers.length === 0 ? (
+                <p className="loading">No drafted players match the current filters.</p>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Player</th>
+                      <th>Draft Year</th>
+                      <th>Undo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUnavailablePlayers.map((player) => (
                   <tr key={`unavailable-${player.id}-${player.name}`}>
                     <td className="compact-cell">
                       <div className="cell-title">{player.name}</div>
                       <div className="cell-sub">
                         {formatTeamAbbrev(player.team)} ·
                         {player.positions.length ? player.positions.join('/') : '—'}
+                        {player.draftedByTeam ? ` · ${player.draftedByTeam}` : ''}
                       </div>
                     </td>
                     <td>{formatDraftYearWithStatus(player)}</td>
@@ -760,9 +863,11 @@ function App() {
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </aside>
       )}
@@ -794,8 +899,10 @@ function App() {
                   <th>Category</th>
                   <th>Age</th>
                   <th>Price</th>
-                  <th>2025 Games</th>
-                  <th>2025 Avg</th>
+                  <th>{year ?? 'Current'} Games</th>
+                  <th>{year ?? 'Current'} Avg</th>
+                  <th>{(year ?? new Date().getFullYear()) - 1} Games</th>
+                  <th>{(year ?? new Date().getFullYear()) - 1} Avg</th>
                   <th>Last 5 Seasons Games</th>
                   <th>Last 5 Seasons Avg</th>
                   <th>Status</th>
@@ -816,6 +923,8 @@ function App() {
                       <td>{getDraftStatusLabel(player)}</td>
                       <td>{player.ageYears ?? '—'}</td>
                       <td>{formatPrice(player.price)}</td>
+                      <td>{player.currentGames ?? '—'}</td>
+                      <td>{player.currentAverage ?? '—'}</td>
                       <td>{player.previousGames ?? '—'}</td>
                       <td>{player.previousAverage ?? '—'}</td>
                       <td>{player.lastFiveGames ?? '—'}</td>
@@ -909,10 +1018,6 @@ function App() {
               <span>Free Agents</span>
               <strong>{teamSlots.ageCounts.free} / {teamSlots.ageLimits.free}</strong>
             </div>
-            <div>
-              <span>Senior (30+)</span>
-              <strong>{teamSlots.ageCounts.senior} / {teamSlots.ageLimits.senior}</strong>
-            </div>
           </div>
           <div className="formation">
             {(['DEF', 'MID', 'RUC', 'FWD', 'BENCH'] as const).map((slot) => (
@@ -988,7 +1093,7 @@ function App() {
               <tr>
                 <th>Player</th>
                 <th>Draft Year</th>
-                <th className="last-five-col">Last 5 Seasons Average</th>
+                <th className="last-five-col">{year ?? 'Current'} Games / Points / Avg</th>
                 <th>Draft</th>
               </tr>
             </thead>
@@ -1005,22 +1110,11 @@ function App() {
                   </td>
                   <td>{formatDraftYearWithStatus(player)}</td>
                   <td className="last-five-col">
-                    {player.lastFiveSeasons && player.lastFiveSeasons.length > 0 ? (
-                      <div className="stacked-stat">
-                        <span>
-                          {(
-                            player.lastFiveSeasons.reduce(
-                              (total, season) => total + (season.games ?? 0),
-                              0
-                            ) / player.lastFiveSeasons.length
-                          ).toFixed(1)}{' '}
-                          games
-                        </span>
-                        <span>{player.lastFiveAverage ?? '—'} points</span>
-                      </div>
-                    ) : (
-                      '—'
-                    )}
+                    <div className="stacked-stat">
+                      <span>{player.currentGames ?? '—'} games</span>
+                      <span>{player.currentTotal ?? '—'} points</span>
+                      <span>{player.currentAverage ?? '—'} avg</span>
+                    </div>
                   </td>
                   <td>
                     <div className="row-actions">
